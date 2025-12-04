@@ -140,149 +140,97 @@
 
     <script src="vendor/protobuf.min.js"></script>
     <script src="vendor/jszip.min.js"></script>
+    <script src="dashcam-mp4.js"></script>
+    <script src="dashcam-helpers.js"></script>
     <script>
         const FILE_REQUIREMENT = 'No SEI metadata found. Requires dashcam footage recorded on Tesla firmware 2025.44.25 or later and HW3 or above. If car is parked, SEI data may not be present.';
 
-        let SeiMetadata = null;
-        let ENUM_FIELDS = null;
-        let SEI_FIELDS = null;
-        let HEADERS = null;
+        let seiType = null, seiFields = null;
 
-        // Initialize protobuf by loading and parsing the .proto file directly
-        async function initProtobuf() {
-            const response = await fetch('dashcam.proto');
-            const protoDefinition = await response.text();
-            const root = protobuf.parse(protoDefinition).root;
-            SeiMetadata = root.lookupType('SeiMetadata');
-            ENUM_FIELDS = {
-                gear_state: SeiMetadata.lookup('Gear'),
-                autopilot_state: SeiMetadata.lookup('AutopilotState')
-            };
-            SEI_FIELDS = deriveFieldInfo(SeiMetadata, ENUM_FIELDS);
-            HEADERS = SEI_FIELDS.map((field) => field.protoName);
-        }
-
-        // Pre-initialize protobuf on page load
-        initProtobuf().catch(err => console.error('Failed to initialize protobuf:', err));
+        // Initialize protobuf
+        DashcamHelpers.initProtobuf().then(({ SeiMetadata, enumFields }) => {
+            seiType = SeiMetadata;
+            seiFields = DashcamHelpers.deriveFieldInfo(SeiMetadata, enumFields, { useSnakeCase: true });
+        }).catch(err => console.error('Protobuf init failed:', err));
 
         const fileInput = document.getElementById('file-input');
         const dropZone = document.getElementById('drop-zone');
         const statusEl = document.getElementById('status');
 
-        fileInput.addEventListener('change', (event) => {
-            handleFiles(event.target.files);
-            event.target.value = '';
-        });
-
-        dropZone.addEventListener('dragover', (event) => {
-            event.preventDefault();
-            dropZone.classList.add('dragover');
-        });
-
-        dropZone.addEventListener('dragleave', () => {
+        fileInput.addEventListener('change', e => { handleFiles(e.target.files); e.target.value = ''; });
+        dropZone.addEventListener('click', () => fileInput.click());
+        document.ondragover = e => { e.preventDefault(); dropZone.classList.add('dragover'); };
+        document.ondragleave = e => { if (!e.relatedTarget) dropZone.classList.remove('dragover'); };
+        document.ondrop = async e => {
+            e.preventDefault();
             dropZone.classList.remove('dragover');
-        });
-
-        dropZone.addEventListener('drop', async (event) => {
-            event.preventDefault();
-            dropZone.classList.remove('dragover');
-            const items = event.dataTransfer?.items;
+            const items = e.dataTransfer?.items;
             if (items) {
                 const { files, directoryName } = await getFilesFromDataTransfer(items);
                 handleFiles(files, directoryName);
             } else {
-                handleFiles(event.dataTransfer?.files ?? []);
+                handleFiles(e.dataTransfer?.files ?? []);
             }
-        });
+        };
 
-        dropZone.addEventListener('click', () => {
-            fileInput.click();
-        });
-
-        // Recursively collect files from dropped items (supports folders)
         async function getFilesFromDataTransfer(items) {
-            const files = [];
-            const entries = [];
+            const files = [], entries = [];
             let directoryName = null;
             for (const item of items) {
                 const entry = item.webkitGetAsEntry?.();
                 if (entry) {
                     entries.push(entry);
-                    // If a single directory is dropped, use its name for the ZIP
-                    if (entry.isDirectory && entries.length === 1) {
-                        directoryName = entry.name;
-                    }
+                    if (entry.isDirectory && entries.length === 1) directoryName = entry.name;
                 }
             }
-            // Only use directory name if exactly one directory was dropped
-            if (entries.length !== 1 || !entries[0].isDirectory) {
-                directoryName = null;
-            }
-            await Promise.all(entries.map(entry => traverseEntry(entry, files)));
+            if (entries.length !== 1 || !entries[0].isDirectory) directoryName = null;
+            await Promise.all(entries.map(e => traverseEntry(e, files)));
             return { files, directoryName };
         }
 
         async function traverseEntry(entry, files) {
             if (entry.isFile) {
-                const file = await new Promise((resolve, reject) => entry.file(resolve, reject));
-                if (file.name.toLowerCase().endsWith('.mp4')) {
-                    files.push(file);
-                }
+                const file = await new Promise((res, rej) => entry.file(res, rej));
+                if (file.name.toLowerCase().endsWith('.mp4')) files.push(file);
             } else if (entry.isDirectory) {
                 const reader = entry.createReader();
-                const entries = await new Promise((resolve, reject) => reader.readEntries(resolve, reject));
+                const entries = await new Promise((res, rej) => reader.readEntries(res, rej));
                 await Promise.all(entries.map(e => traverseEntry(e, files)));
             }
         }
 
         async function handleFiles(fileList, directoryName = null) {
-            if (!SeiMetadata) {
-                await initProtobuf();
-            }
+            if (!seiType) await DashcamHelpers.initProtobuf().then(({ SeiMetadata, enumFields }) => {
+                seiType = SeiMetadata;
+                seiFields = DashcamHelpers.deriveFieldInfo(SeiMetadata, enumFields, { useSnakeCase: true });
+            });
 
-            const files = Array.isArray(fileList)
-                ? fileList.filter((file) => file.name.toLowerCase().endsWith('.mp4'))
-                : Array.from(fileList).filter((file) => file.name.toLowerCase().endsWith('.mp4'));
-            if (!files.length) {
-                statusEl.textContent = 'Please choose at least one MP4 file.';
-                return;
-            }
+            const files = (Array.isArray(fileList) ? fileList : Array.from(fileList))
+                .filter(f => f.name.toLowerCase().endsWith('.mp4'));
+            if (!files.length) { statusEl.textContent = 'Please choose at least one MP4 file.'; return; }
 
             statusEl.textContent = `Processing ${files.length} file${files.length === 1 ? '' : 's'}…`;
-            const successes = [];
-            const failures = [];
+            const successes = [], failures = [];
 
             for (const file of files) {
                 try {
-                    const result = await processFile(file);
-                    successes.push(result);
+                    successes.push(await processFile(file));
                 } catch (error) {
                     failures.push({ file, error });
-                    if (files.length === 1 && error?.code === 'NO_SEI') {
-                        alert(FILE_REQUIREMENT);
-                    }
-                    console.warn(`Skipping ${file.name}:`, error);
+                    if (files.length === 1 && error?.code === 'NO_SEI') alert(FILE_REQUIREMENT);
                 }
             }
 
-            if (!successes.length) {
-                statusEl.textContent = failures.length ? 'No files produced SEI metadata.' : 'Nothing to do.';
-                return;
-            }
+            if (!successes.length) { statusEl.textContent = failures.length ? 'No files produced SEI metadata.' : 'Nothing to do.'; return; }
 
-            // Single file: download CSV directly. Multiple files: bundle into ZIP.
             if (successes.length === 1) {
-                const { filename, csv } = successes[0];
-                downloadBlob(new Blob([csv], { type: 'text/csv' }), filename);
+                downloadBlob(new Blob([successes[0].csv], { type: 'text/csv' }), successes[0].filename);
             } else {
                 const zip = new JSZip();
-                for (const { filename, csv } of successes) {
-                    zip.file(filename, csv);
-                }
-                const zipBlob = await zip.generateAsync({ type: 'blob' });
-                const zipName = directoryName ? `${directoryName}_sei.zip` : 'dashcam_sei_metadata.zip';
-                downloadBlob(zipBlob, zipName);
+                for (const { filename, csv } of successes) zip.file(filename, csv);
+                downloadBlob(await zip.generateAsync({ type: 'blob' }), directoryName ? `${directoryName}_sei.zip` : 'dashcam_sei_metadata.zip');
             }
+
             const summary = successes.length === 1
                 ? `Extracted ${successes[0].rows} row${successes[0].rows === 1 ? '' : 's'} from ${successes[0].source}.`
                 : `Exported ${successes.length} CSVs as ZIP.`;
@@ -290,211 +238,23 @@
         }
 
         async function processFile(file) {
-            const buffer = await file.arrayBuffer();
-            const view = new DataView(buffer);
-            const { offset, size } = findMdat(view);
-            const rows = extractSeiRows(buffer, view, offset, size);
-            if (!rows.length) {
-                const err = new Error(FILE_REQUIREMENT);
-                err.code = 'NO_SEI';
-                throw err;
-            }
-            const csv = buildCsv(rows);
-            const filename = file.name.replace(/\.mp4$/i, '') + '_sei.csv';
-            return { filename, csv, rows: rows.length, source: file.name };
-        }
-
-        function extractSeiRows(buffer, view, offset, size) {
-            const rows = [];
-            for (const nal of iterSeiNals(buffer, view, offset, size)) {
-                const payload = extractProtoPayload(nal);
-                if (!payload) {
-                    continue;
-                }
-                try {
-                    const message = SeiMetadata.decode(payload);
-                    rows.push(toRow(message));
-                } catch (err) {
-                    console.warn('Failed to decode SEI payload:', err);
-                }
-            }
-            return rows;
-        }
-
-        function* iterSeiNals(buffer, view, offset, size) {
-            const NAL_SEI = 6;
-            const NAL_SEI_USER_DATA_UNREGISTERED = 5;
-            const totalBytes = view.byteLength;
-            const unlimited = size === 0;
-            const limit = unlimited ? totalBytes - offset : size;
-            let consumed = 0;
-            let cursor = offset;
-            while (cursor + 4 <= totalBytes && (unlimited ? cursor < totalBytes : consumed < limit)) {
-                const nalSize = view.getUint32(cursor);
-                cursor += 4;
-                if (nalSize < 2 || cursor + nalSize > totalBytes) {
-                    cursor = Math.min(cursor + Math.max(nalSize, 0), totalBytes);
-                    consumed += 4 + Math.max(nalSize, 0);
-                    continue;
-                }
-                const firstByte = view.getUint8(cursor);
-                const secondByte = view.getUint8(cursor + 1);
-                if ((firstByte & 0x1f) !== NAL_SEI || secondByte !== NAL_SEI_USER_DATA_UNREGISTERED) {
-                    cursor += nalSize;
-                    consumed += 4 + nalSize;
-                    continue;
-                }
-                const payload = new Uint8Array(buffer.slice(cursor, cursor + nalSize));
-                cursor += nalSize;
-                consumed += 4 + nalSize;
-                yield payload;
-            }
-        }
-
-        function extractProtoPayload(nal) {
-            if (!(nal instanceof Uint8Array) || nal.length < 2) {
-                return null;
-            }
-            for (let i = 3; i < nal.length - 1; i++) {
-                const byte = nal[i];
-                if (byte === 0x42) {
-                    continue;
-                }
-                if (byte === 0x69) {
-                    if (i > 2) {
-                        return stripEmulationPreventionBytes(nal.subarray(i + 1, nal.length - 1));
-                    }
-                    break;
-                }
-                break;
-            }
-            return null;
-        }
-
-        function stripEmulationPreventionBytes(data) {
-            const out = [];
-            let zeroCount = 0;
-            for (const byte of data) {
-                if (zeroCount >= 2 && byte === 0x03) {
-                    zeroCount = 0;
-                    continue;
-                }
-                out.push(byte);
-                zeroCount = byte === 0 ? zeroCount + 1 : 0;
-            }
-            return Uint8Array.from(out);
-        }
-
-        function findMdat(view) {
-            let offset = 0;
-            while (offset + 8 <= view.byteLength) {
-                const size32 = view.getUint32(offset);
-                const atomType = readAscii(view, offset + 4, 4);
-                offset += 8;
-                let atomSize = size32;
-                let headerSize = 8;
-                if (size32 === 1) {
-                    if (offset + 8 > view.byteLength) {
-                        break;
-                    }
-                    const high = view.getUint32(offset);
-                    const low = view.getUint32(offset + 4);
-                    atomSize = Number((BigInt(high) << 32n) | BigInt(low));
-                    headerSize = 16;
-                    offset += 8;
-                } else if (size32 === 0) {
-                    atomSize = 0;
-                }
-                if (atomType === 'mdat') {
-                    const payloadSize = atomSize ? atomSize - headerSize : 0;
-                    return { offset, size: payloadSize };
-                }
-                if (atomSize < headerSize) {
-                    throw new Error('Invalid MP4 atom size.');
-                }
-                offset += atomSize - headerSize;
-            }
-            throw new Error('mdat atom not found in file.');
-        }
-
-        function buildCsv(rows) {
-            const lines = [HEADERS.join(',')];
-            for (const row of rows) {
-                const values = HEADERS.map((header) => csvEscape(row[header] ?? ''));
-                lines.push(values.join(','));
-            }
-            return lines.join('\n');
-        }
-
-        function toRow(message) {
-            const row = {};
-            for (const { protoName, propName, enumMap } of SEI_FIELDS) {
-                const value = message[propName];
-                if (value === undefined || value === null) {
-                    row[protoName] = '';
-                    continue;
-                }
-                if (enumMap) {
-                    row[protoName] = enumName(enumMap, value);
-                } else if (typeof value === 'object' && typeof value.toString === 'function') {
-                    row[protoName] = value.toString();
-                } else {
-                    row[protoName] = value;
-                }
-            }
-            return row;
-        }
-
-        function enumName(enumObj, numericValue) {
-            if (enumObj && enumObj.valuesById) {
-                return enumObj.valuesById[numericValue] || numericValue;
-            }
-            for (const [key, val] of Object.entries(enumObj || {})) {
-                if (val === numericValue) {
-                    return key;
-                }
-            }
-            return numericValue;
-        }
-
-        function readAscii(view, start, length) {
-            let text = '';
-            for (let i = 0; i < length; i++) {
-                text += String.fromCharCode(view.getUint8(start + i));
-            }
-            return text;
-        }
-
-        function camelToSnake(name) {
-            return name.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase();
-        }
-
-        function deriveFieldInfo(SeiMetadataCtor, enumMap) {
-            const fields = SeiMetadataCtor.fieldsArray || [];
-            return fields.map((field) => {
-                const propName = field.name;
-                const protoName = camelToSnake(propName);
-                return {
-                    protoName,
-                    propName,
-                    enumMap: enumMap[protoName] ?? null
-                };
-            });
-        }
-
-        function csvEscape(value) {
-            const text = value === null || value === undefined ? '' : String(value);
-            return /[",\n]/.test(text) ? '"' + text.replace(/"/g, '""') + '"' : text;
+            const mp4 = new DashcamMP4(await file.arrayBuffer());
+            const messages = mp4.extractSeiMessages(seiType);
+            if (!messages.length) { const err = new Error(FILE_REQUIREMENT); err.code = 'NO_SEI'; throw err; }
+            return {
+                filename: file.name.replace(/\.mp4$/i, '') + '_sei.csv',
+                csv: DashcamHelpers.buildCsv(messages, seiFields),
+                rows: messages.length,
+                source: file.name
+            };
         }
 
         function downloadBlob(blob, filename) {
             const url = URL.createObjectURL(blob);
-            const anchor = document.createElement('a');
-            anchor.href = url;
-            anchor.download = filename;
-            document.body.appendChild(anchor);
-            anchor.click();
-            document.body.removeChild(anchor);
+            const a = Object.assign(document.createElement('a'), { href: url, download: filename });
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
             setTimeout(() => URL.revokeObjectURL(url), 1000);
         }
     </script>

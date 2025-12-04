@@ -81,14 +81,15 @@
     <p class="subtitle">Tools for extracting metadata from supported Tesla Dashcam videos.</p>
 
     <ul>
-        <li><a href="sei_extractor.html">Web Extractor</a> — drag and drop your MP4 files to extract SEI metadata to CSV
+        <li><a href="sei_explorer.html">SEI Explorer</a> — view dashcam footage with SEI metadata displayed alongside
+            video playback.</li>
+        <li><a href="sei_extractor.html">SEI Extractor</a> — drag and drop your MP4 files to extract SEI metadata to CSV
             in your browser.</li>
         <li><a href="https://github.com/teslamotors/dashcam/blob/master/sei_extractor.py">Python CLI</a> — Python-based
             metadata extractor for extracting SEI data from MP4 files.</li>
         <li><a href="https://github.com/teslamotors/dashcam/blob/master/dashcam.proto">Protobuf schema</a> — the
             protobuf spec that is used to decode SEI data in the MP4 file(s).</li>
     </ul>
-
     <p class="note">Not all Tesla-generated dashcam clips contain SEI data. Only clips recorded on Tesla firmware
         2025.44.25 or later and HW3 or above contain SEI data. If car is parked, SEI data may not be present.</p>
 </body>
