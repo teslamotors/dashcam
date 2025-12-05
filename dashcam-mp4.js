@@ -10,20 +10,58 @@ class DashcamMP4 {
     }
 
     // -------------------------------------------------------------
+    // Static: Quick frame count from File (reads only moov box)
+    // -------------------------------------------------------------
+
+    /**
+     * Get frame count from a File without loading entire file into memory.
+     * Reads only the moov box (~20-50KB) to extract frame count from stts.
+     */
+    static async getFrameCountFromFile(file) {
+        // Scan top-level boxes to find moov
+        let pos = 0, moovStart = -1, moovSize = 0;
+        while (pos + 8 <= file.size) {
+            const header = new DataView(await file.slice(pos, pos + 16).arrayBuffer());
+            let size = header.getUint32(0);
+            const type = DashcamMP4.readAscii(header, 4, 4);
+            const headerSize = size === 1 ? 16 : 8;
+            if (size === 1) size = Number((BigInt(header.getUint32(8)) << 32n) | BigInt(header.getUint32(12)));
+            else if (size === 0) size = file.size - pos;
+            if (type === 'moov') { moovStart = pos + headerSize; moovSize = size - headerSize; break; }
+            pos += size;
+        }
+        if (moovStart < 0) throw new Error('No moov box found');
+
+        // Read moov and navigate to stts
+        const moov = new DataView(await file.slice(moovStart, moovStart + moovSize).arrayBuffer());
+        const trak = DashcamMP4.findBoxIn(moov, 0, moovSize, 'trak');
+        const mdia = DashcamMP4.findBoxIn(moov, trak.start, trak.end, 'mdia');
+        const minf = DashcamMP4.findBoxIn(moov, mdia.start, mdia.end, 'minf');
+        const stbl = DashcamMP4.findBoxIn(moov, minf.start, minf.end, 'stbl');
+        const stts = DashcamMP4.findBoxIn(moov, stbl.start, stbl.end, 'stts');
+
+        // Sum sample counts from stts entries
+        const entryCount = moov.getUint32(stts.start + 4);
+        let frameCount = 0;
+        for (let i = 0, p = stts.start + 8; i < entryCount; i++, p += 8) {
+            frameCount += moov.getUint32(p);
+        }
+        return frameCount;
+    }
+
+    // -------------------------------------------------------------
     // MP4 Box Navigation
     // -------------------------------------------------------------
 
-    /** Find a box by name within a range */
-    findBox(start, end, name) {
+    /** Find a box by name within a DataView range (static helper) */
+    static findBoxIn(view, start, end, name) {
         for (let pos = start; pos + 8 <= end;) {
-            let size = this.view.getUint32(pos);
-            const type = this.readAscii(pos + 4, 4);
+            let size = view.getUint32(pos);
+            const type = DashcamMP4.readAscii(view, pos + 4, 4);
             const headerSize = size === 1 ? 16 : 8;
 
             if (size === 1) {
-                const high = this.view.getUint32(pos + 8);
-                const low = this.view.getUint32(pos + 12);
-                size = Number((BigInt(high) << 32n) | BigInt(low));
+                size = Number((BigInt(view.getUint32(pos + 8)) << 32n) | BigInt(view.getUint32(pos + 12)));
             } else if (size === 0) {
                 size = end - pos;
             }
@@ -34,6 +72,11 @@ class DashcamMP4 {
             pos += size;
         }
         throw new Error(`Box "${name}" not found`);
+    }
+
+    /** Find a box by name within a range */
+    findBox(start, end, name) {
+        return DashcamMP4.findBoxIn(this.view, start, end, name);
     }
 
     /** Find mdat box and return content location */
@@ -199,10 +242,16 @@ class DashcamMP4 {
     // Utilities
     // -------------------------------------------------------------
 
-    readAscii(start, len) {
+    /** Read ASCII string from DataView (static helper) */
+    static readAscii(view, start, len) {
         let s = '';
-        for (let i = 0; i < len; i++) s += String.fromCharCode(this.view.getUint8(start + i));
+        for (let i = 0; i < len; i++) s += String.fromCharCode(view.getUint8(start + i));
         return s;
+    }
+
+    /** Instance method for convenience */
+    readAscii(start, len) {
+        return DashcamMP4.readAscii(this.view, start, len);
     }
 
     hex(n) { return n.toString(16).padStart(2, '0'); }
