@@ -413,6 +413,7 @@
     <script src="vendor/protobuf.min.js"></script>
     <script src="vendor/jszip.min.js"></script>
     <script src="dashcam-mp4.js"></script>
+    <script src="sei_explorer_hud.js"></script>
     <script>
         // State
         let seiType = null, seiFields = null, seiFieldsCsv = null;
@@ -420,6 +421,9 @@
         let currentFileName = null;
         let decoder = null, decoding = false, pendingFrame = null;
         let playing = false, playTimer = null;
+        // hud
+        let seiHud = null;
+        let currentSei = null;
 
         // DOM
         const $ = id => document.getElementById(id);
@@ -569,6 +573,30 @@
 
         function showFrame(index) {
             frameNum.textContent = `Frame ${index + 1}/${frames.length}`;
+
+            // Store current telemetry
+            currentSei = frames[index].sei;
+
+            // Mount HUD once, when first telemetry appears
+            if (!seiHud && window.SeiHud && currentSei) {
+                let fields = {};
+                for (const { propName, label, enumMap } of seiFields) {
+                    const value = currentSei?.[propName];
+                    const displayValue = value != null ? DashcamHelpers.formatValue(value, enumMap) : '—';
+                    fields[propName] = {
+                        value: value,
+                        displayValue: displayValue
+                    }
+                }
+
+                seiHud = window.SeiHud.mount({
+                    // anchor to the video container, not a <video>
+                    videoEl: document.querySelector('.video-wrap'),
+                    getTelemetry: () => ({...currentSei, fields})
+                });
+            }
+
+
             renderSei(frames[index].sei);
             if (decoding) { pendingFrame = index; return; }
             decodeFrame(index);
