@@ -247,6 +247,107 @@
             cursor: not-allowed;
         }
 
+        /* ===== STATS OVERLAY ===== */
+        .stats-overlay {
+            position: absolute;
+            top: 32px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: none;
+            grid-template-columns: 28px 28px 1fr 28px 28px;
+            grid-template-rows: 28px 28px;
+            gap: 6px;
+            padding: 8px 12px;
+            background: rgba(0, 0, 0, 0.3);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border-radius: 12px;
+            border: 3px solid rgba(255, 255, 255, 0.15);
+            box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.05), 0 0 20px rgba(0, 0, 0, 0.3);
+            color: #fff;
+            font-family: system-ui, sans-serif;
+        }
+
+        .stats-overlay.visible {
+            display: grid;
+        }
+
+        .stats-overlay svg {
+            width: 28px;
+            height: 28px;
+            fill: #fff;
+        }
+
+        .stats-overlay .speed {
+            grid-column: 3;
+            grid-row: 1 / 3;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-width: 70px;
+        }
+
+        .stats-overlay .speed-val {
+            font-size: 32px;
+            font-weight: 700;
+            line-height: 1;
+        }
+
+        .stats-overlay .speed-unit {
+            font-size: 11px;
+            opacity: 0.7;
+        }
+
+        .stats-overlay .blinker {
+            opacity: 0;
+            transition: opacity 0.1s;
+        }
+
+        .stats-overlay .blinker.on {
+            opacity: 1;
+        }
+
+        .stats-overlay .brake.applied svg {
+            fill: #ff6b6b;
+        }
+
+        .stats-overlay .gear {
+            grid-column: 1;
+            grid-row: 1;
+        }
+
+        .stats-overlay .brake {
+            grid-column: 1;
+            grid-row: 2;
+        }
+
+        .stats-overlay .steering {
+            grid-column: 5;
+            grid-row: 1;
+        }
+
+        .stats-overlay .accel {
+            grid-column: 5;
+            grid-row: 2;
+        }
+
+        .stats-overlay .blinker-l {
+            grid-column: 2;
+            grid-row: 1 / 3;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .stats-overlay .blinker-r {
+            grid-column: 4;
+            grid-row: 1 / 3;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
         /* ===== METADATA PANEL ===== */
         .meta-panel {
             flex: 1;
@@ -386,6 +487,39 @@
                         <p>Drop MP4 here or click to select</p>
                     </div>
                     <canvas id="canvas"></canvas>
+                    <div class="stats-overlay" id="statsOverlay">
+                        <div class="blinker blinker-l"><svg viewBox="0 0 24 24">
+                                <polygon points="14,6 6,12 14,18" />
+                            </svg></div>
+                        <div class="gear"><svg viewBox="0 0 24 24">
+                                <circle cx="12" cy="12" r="9" fill="none" stroke="#fff" stroke-width="1" /><text x="12"
+                                    y="16" text-anchor="middle" font-size="10" font-weight="700" fill="#fff"
+                                    id="gearText">P</text>
+                            </svg></div>
+                        <div class="speed"><span class="speed-val" id="speedVal">0</span><span
+                                class="speed-unit">km/h</span></div>
+                        <div class="steering"><svg viewBox="0 0 24 24" id="steeringSvg">
+                                <circle cx="12" cy="12" r="9" fill="none" stroke="#fff" stroke-width="1" />
+                                <circle cx="12" cy="12" r="5" fill="none" stroke="#fff" stroke-width="2" />
+                                <line x1="12" y1="3" x2="12" y2="7" stroke="#fff" stroke-width="2" />
+                            </svg></div>
+                        <div class="blinker blinker-r"><svg viewBox="0 0 24 24">
+                                <polygon points="10,6 18,12 10,18" />
+                            </svg></div>
+                        <div class="brake"><svg viewBox="0 0 24 24">
+                                <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1" />
+                                <rect x="8" y="10" width="8" height="4" fill="currentColor" />
+                            </svg></div>
+                        <div class="accel"><svg viewBox="0 0 24 24">
+                                <defs>
+                                    <clipPath id="accelClip">
+                                        <rect x="3" y="3" width="18" height="18" id="accelFill" />
+                                    </clipPath>
+                                </defs>
+                                <circle cx="12" cy="12" r="9" fill="none" stroke="#fff" stroke-width="1" />
+                                <circle cx="12" cy="12" r="9" fill="#4ade80" clip-path="url(#accelClip)" />
+                            </svg></div>
+                    </div>
                 </div>
                 <div class="scrubber">
                     <button id="playBtn" title="Play/Pause" disabled>
@@ -427,6 +561,11 @@
         const canvas = $('canvas'), ctx = canvas.getContext('2d');
         const slider = $('slider'), playBtn = $('playBtn'), exportBtn = $('exportBtn');
         const frameNum = $('frameNum'), fileName = $('fileName'), metaList = $('metaList');
+        const statsOverlay = $('statsOverlay'), gearText = $('gearText'), speedVal = $('speedVal');
+        const steeringSvg = $('steeringSvg'), accelFill = $('accelFill');
+        const blinkerL = statsOverlay.querySelector('.blinker-l'), blinkerR = statsOverlay.querySelector('.blinker-r');
+        const brakeEl = statsOverlay.querySelector('.brake');
+        let blinkerTimer = null, blinkerState = false, blinkerLeft = false, blinkerRight = false;
 
         // Events
         dropOverlay.onclick = () => fileInput.click();
@@ -541,6 +680,7 @@
                 playBtn.disabled = true;
                 slider.disabled = true;
                 dropOverlay.classList.remove('hidden');
+                statsOverlay.classList.remove('visible');
                 alert(err.message);
             }
         }
@@ -629,6 +769,43 @@
                 const displayValue = value != null ? DashcamHelpers.formatValue(value, enumMap) : '—';
                 item.innerHTML = `<span class="label">${label}</span><span class="value">${displayValue}</span>`;
                 metaList.appendChild(item);
+            }
+            updateStats(sei);
+        }
+
+        function updateStats(sei) {
+            if (!sei) { statsOverlay.classList.remove('visible'); return; }
+            statsOverlay.classList.add('visible');
+
+            const gearMap = { 0: 'P', 1: 'D', 2: 'R', 3: 'N' };
+            gearText.textContent = gearMap[sei.gearState] || 'P';
+
+            const kmh = Math.round((sei.vehicleSpeedMps || 0) * 3.6);
+            speedVal.textContent = kmh;
+
+            steeringSvg.style.transform = `rotate(${sei.steeringWheelAngle || 0}deg)`;
+
+            brakeEl.classList.toggle('applied', !!sei.brakeApplied);
+
+            const accelPct = Math.max(0, Math.min(1, sei.acceleratorPedalPosition || 0));
+            const y = 21 - accelPct * 18;
+            accelFill.setAttribute('y', y);
+            accelFill.setAttribute('height', 21 - y);
+
+            blinkerLeft = !!sei.blinkerOnLeft;
+            blinkerRight = !!sei.blinkerOnRight;
+            if (blinkerLeft || blinkerRight) {
+                blinkerL.classList.toggle('on', blinkerLeft && blinkerState);
+                blinkerR.classList.toggle('on', blinkerRight && blinkerState);
+                if (!blinkerTimer) blinkerTimer = setInterval(() => {
+                    blinkerState = !blinkerState;
+                    blinkerL.classList.toggle('on', blinkerLeft && blinkerState);
+                    blinkerR.classList.toggle('on', blinkerRight && blinkerState);
+                }, 400);
+            } else {
+                blinkerL.classList.remove('on');
+                blinkerR.classList.remove('on');
+                if (blinkerTimer) { clearInterval(blinkerTimer); blinkerTimer = null; }
             }
         }
 
