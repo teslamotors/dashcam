@@ -340,8 +340,8 @@
             fill: rgba(84, 209, 71, 0.7);
         }
 
-        .stats-overlay .brake.applied svg {
-            fill: rgb(255, 107, 107);
+        .stats-overlay .brake.applied .brake-fill {
+            fill: rgba(233, 146, 75, 0.7);
         }
 
         .stats-overlay .gear {
@@ -592,9 +592,10 @@
                         </div>
                         <div class="brake">
                             <svg viewBox="0 0 24 24">
-                                <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" />
-                                <rect x="8" y="12" rx="1" ry="1" width="8" height="4" fill="currentColor" />
-                                <line x1="16" y1="8" x2="13" y2="14" stroke="currentColor" stroke-linecap="round" />
+                                <circle cx="12" cy="12" r="9" fill="none" stroke="#fff" />
+                                <circle cx="12" cy="12" r="9" class="brake-fill" fill="none" />
+                                <rect x="8" y="12" rx="1" ry="1" width="8" height="4" fill="#fff" />
+                                <line x1="16" y1="8" x2="13" y2="14" stroke="#fff" stroke-linecap="round" />
                             </svg>
                         </div>
                         <div class="accel">
