@@ -359,6 +359,35 @@
             justify-content: center;
         }
 
+        @media (max-width: 600px) {
+            .stats-overlay {
+                top: 8px;
+                grid-template-columns: 20px 20px 1fr 20px 20px;
+                grid-template-rows: 20px 20px;
+                gap: 4px;
+                padding: 6px 8px;
+                border-radius: 8px;
+                border-width: 2px;
+            }
+
+            .stats-overlay svg {
+                width: 20px;
+                height: 20px;
+            }
+
+            .stats-overlay .speed-val {
+                font-size: 22px;
+            }
+
+            .stats-overlay .speed-unit {
+                font-size: 9px;
+            }
+
+            .stats-overlay .speed {
+                min-width: 50px;
+            }
+        }
+
         /* ===== METADATA PANEL ===== */
         .meta-panel {
             flex: 1;
