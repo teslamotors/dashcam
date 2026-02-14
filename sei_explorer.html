@@ -247,6 +247,166 @@
             cursor: not-allowed;
         }
 
+        /* ===== STATS OVERLAY ===== */
+        .stats-overlay {
+            position: absolute;
+            top: 32px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: none;
+            grid-template-columns: 28px 28px 1fr 28px 28px;
+            grid-template-rows: 28px 28px;
+            gap: 6px;
+            padding: 8px 12px;
+            background: rgba(0, 0, 0, 0.3);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border-radius: 12px;
+            border: 3px solid rgba(255, 255, 255, 0.15);
+            box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.05), 0 0 20px rgba(0, 0, 0, 0.3);
+            user-select: none;
+        }
+
+        .stats-overlay.visible {
+            display: grid;
+        }
+
+        .stats-overlay svg {
+            width: 28px;
+            height: 28px;
+            fill: currentColor;
+        }
+
+        .stats-overlay .speed {
+            grid-column: 3;
+            grid-row: 1 / 3;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-width: 70px;
+        }
+
+        .stats-overlay .speed-click {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            cursor: pointer;
+        }
+
+        .stats-overlay .speed-val {
+            font-size: 32px;
+            font-weight: 700;
+            line-height: 1;
+        }
+
+        .stats-overlay .speed-unit {
+            font-size: 11px;
+            opacity: 0.7;
+        }
+
+        .stats-overlay .autopilot {
+            font-size: 9px;
+            font-weight: 650;
+            color: #0070ff;
+            margin-bottom: 2px;
+            white-space: nowrap;
+            display: none;
+        }
+
+        .stats-overlay .autopilot.active {
+            display: block;
+        }
+
+        .stats-overlay .blinker {
+            display: none;
+            transition: opacity 0.1s;
+        }
+
+        .stats-overlay .blinker.active {
+            display: flex;
+        }
+
+        .stats-overlay .blinker.dim {
+            opacity: 0.35;
+        }
+
+        .stats-overlay .blinker circle {
+            fill: rgb(80, 186, 69);
+            stroke: none;
+        }
+
+        .stats-overlay .accel-fill {
+            fill: rgba(84, 209, 71, 0.7);
+        }
+
+        .stats-overlay .brake.applied .brake-fill {
+            fill: rgba(233, 146, 75, 0.7);
+        }
+
+        .stats-overlay .gear {
+            grid-column: 1;
+            grid-row: 1;
+        }
+
+        .stats-overlay .brake {
+            grid-column: 1;
+            grid-row: 2;
+        }
+
+        .stats-overlay .steering {
+            grid-column: 5;
+            grid-row: 1;
+        }
+
+        .stats-overlay .accel {
+            grid-column: 5;
+            grid-row: 2;
+        }
+
+        .stats-overlay .blinker-l {
+            grid-column: 2;
+            grid-row: 1 / 3;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .stats-overlay .blinker-r {
+            grid-column: 4;
+            grid-row: 1 / 3;
+            align-items: center;
+            justify-content: center;
+        }
+
+        @media (max-width: 600px) {
+            .stats-overlay {
+                top: 8px;
+                grid-template-columns: 20px 20px 1fr 20px 20px;
+                grid-template-rows: 20px 20px;
+                gap: 4px;
+                padding: 6px 8px;
+                border-radius: 8px;
+                border-width: 2px;
+            }
+
+            .stats-overlay svg {
+                width: 20px;
+                height: 20px;
+            }
+
+            .stats-overlay .speed-val {
+                font-size: 22px;
+            }
+
+            .stats-overlay .speed-unit {
+                font-size: 9px;
+            }
+
+            .stats-overlay .speed {
+                min-width: 50px;
+            }
+        }
+
         /* ===== METADATA PANEL ===== */
         .meta-panel {
             flex: 1;
@@ -386,6 +546,72 @@
                         <p>Drop MP4 here or click to select</p>
                     </div>
                     <canvas id="canvas"></canvas>
+                    <div class="stats-overlay" id="statsOverlay">
+                        <div class="blinker blinker-l">
+                            <svg viewBox="0 0 24 24">
+                                <circle cx="12" cy="12" r="9" />
+                                <g transform="translate(4.5, 4.5) scale(0.625)">
+                                    <path
+                                        d="M13 9a1 1 0 0 1-1-1V5.061a1 1 0 0 0-1.811-.75l-6.835 6.836a1.207 1.207 0 0 0 0 1.707l6.835 6.835a1 1 0 0 0 1.811-.75V16a1 1 0 0 1 1-1h6a1 1 0 0 0 1-1v-4a1 1 0 0 0-1-1z"
+                                        fill="currentColor" />
+                                </g>
+                            </svg>
+                        </div>
+                        <div class="gear">
+                            <svg viewBox="0 0 24 24">
+                                <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" />
+                                <text x="12" y="16" text-anchor="middle" font-size="10" font-weight="700"
+                                    fill="currentColor" id="gearText">P</text>
+                            </svg>
+                        </div>
+                        <div class="speed">
+                            <span class="autopilot" id="autopilot"></span>
+                            <span class="speed-click">
+                                <span class="speed-val" id="speedVal">0</span>
+                                <span class="speed-unit">km/h</span>
+                            </span>
+                        </div>
+                        <div class="steering">
+                            <svg viewBox="0 0 24 24" id="steeringSvg">
+                                <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" />
+                                <circle cx="12" cy="12" r="5" fill="none" stroke="currentColor" stroke-width="2" />
+                                <circle cx="12" cy="12" r="2" fill="currentColor" />
+                                <line x1="7" y1="12" x2="17" y2="12" stroke="currentColor" stroke-width="2" />
+                                <line x1="12" y1="12" x2="12" y2="17" stroke="currentColor" stroke-width="2" />
+                            </svg>
+                        </div>
+                        <div class="blinker blinker-r">
+                            <svg viewBox="0 0 24 24">
+                                <circle cx="12" cy="12" r="9" />
+                                <g transform="translate(4.5, 4.5) scale(0.625)">
+                                    <path
+                                        d="M11 9a1 1 0 0 0 1-1V5.061a1 1 0 0 1 1.811-.75l6.836 6.836a1.207 1.207 0 0 1 0 1.707l-6.836 6.835a1 1 0 0 1-1.811-.75V16a1 1 0 0 0-1-1H5a1 1 0 0 1-1-1v-4a1 1 0 0 1 1-1z"
+                                        fill="currentColor" />
+                                </g>
+                            </svg>
+                        </div>
+                        <div class="brake">
+                            <svg viewBox="0 0 24 24">
+                                <circle cx="12" cy="12" r="9" fill="none" stroke="#fff" />
+                                <circle cx="12" cy="12" r="9" class="brake-fill" fill="none" />
+                                <rect x="8" y="12" rx="1" ry="1" width="8" height="4" fill="#fff" />
+                                <line x1="16" y1="8" x2="13" y2="14" stroke="#fff" stroke-linecap="round" />
+                            </svg>
+                        </div>
+                        <div class="accel">
+                            <svg viewBox="0 0 24 24">
+                                <defs>
+                                    <clipPath id="accelClip">
+                                        <rect x="3" y="3" width="18" height="18" id="accelFill" />
+                                    </clipPath>
+                                </defs>
+                                <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" />
+                                <circle cx="12" cy="12" r="9" class="accel-fill" clip-path="url(#accelClip)" />
+                                <rect x="10" y="9" rx="1" ry="1" width="4" height="8" fill="currentColor" />
+                                <line x1="12" y1="9" x2="12" y2="7" stroke="currentColor" stroke-linecap="round" />
+                            </svg>
+                        </div>
+                    </div>
                 </div>
                 <div class="scrubber">
                     <button id="playBtn" title="Play/Pause" disabled>
@@ -427,6 +653,18 @@
         const canvas = $('canvas'), ctx = canvas.getContext('2d');
         const slider = $('slider'), playBtn = $('playBtn'), exportBtn = $('exportBtn');
         const frameNum = $('frameNum'), fileName = $('fileName'), metaList = $('metaList');
+        const statsOverlay = $('statsOverlay'), gearText = $('gearText'), speedVal = $('speedVal');
+        const steeringSvg = $('steeringSvg'), accelFill = $('accelFill'), autopilot = $('autopilot');
+        const blinkerL = statsOverlay.querySelector('.blinker-l'), blinkerR = statsOverlay.querySelector('.blinker-r');
+        const brakeEl = statsOverlay.querySelector('.brake');
+        let blinkerTimer = null, blinkerState = false, blinkerLeft = false, blinkerRight = false;
+        let useMph = false, lastSpeedMps = 0;
+        const speedUnit = statsOverlay.querySelector('.speed-unit');
+        statsOverlay.querySelector('.speed-click').onclick = () => {
+            useMph = !useMph;
+            speedUnit.textContent = useMph ? 'mph' : 'km/h';
+            speedVal.textContent = Math.round(lastSpeedMps * (useMph ? 2.237 : 3.6));
+        };
 
         // Events
         dropOverlay.onclick = () => fileInput.click();
@@ -541,6 +779,7 @@
                 playBtn.disabled = true;
                 slider.disabled = true;
                 dropOverlay.classList.remove('hidden');
+                statsOverlay.classList.remove('visible');
                 alert(err.message);
             }
         }
@@ -629,6 +868,50 @@
                 const displayValue = value != null ? DashcamHelpers.formatValue(value, enumMap) : '—';
                 item.innerHTML = `<span class="label">${label}</span><span class="value">${displayValue}</span>`;
                 metaList.appendChild(item);
+            }
+            updateStats(sei);
+        }
+
+        function updateStats(sei) {
+            if (!sei) { statsOverlay.classList.remove('visible'); return; }
+            statsOverlay.classList.add('visible');
+
+            const gearMap = { 0: 'P', 1: 'D', 2: 'R', 3: 'N' };
+            gearText.textContent = gearMap[sei.gearState] || 'P';
+
+            lastSpeedMps = sei.vehicleSpeedMps || 0;
+            speedVal.textContent = Math.round(lastSpeedMps * (useMph ? 2.237 : 3.6));
+
+            const apMap = { 1: 'Full Self-Driving', 2: 'Autosteer', 3: 'TACC' };
+            const apText = apMap[sei.autopilotState];
+            autopilot.textContent = apText ? `${apText} Active` : '';
+            autopilot.classList.toggle('active', !!apText);
+
+            steeringSvg.style.transform = `rotate(${sei.steeringWheelAngle || 0}deg)`;
+
+            brakeEl.classList.toggle('applied', !!sei.brakeApplied);
+
+            const accelPct = Math.max(0, Math.min(1, (sei.acceleratorPedalPosition || 0) / 100));
+            const y = 21 - accelPct * 18;
+            accelFill.setAttribute('y', y);
+            accelFill.setAttribute('height', 21 - y);
+
+            blinkerLeft = !!sei.blinkerOnLeft;
+            blinkerRight = !!sei.blinkerOnRight;
+            blinkerL.classList.toggle('active', blinkerLeft);
+            blinkerR.classList.toggle('active', blinkerRight);
+            if (blinkerLeft || blinkerRight) {
+                blinkerL.classList.toggle('dim', blinkerLeft && blinkerState);
+                blinkerR.classList.toggle('dim', blinkerRight && blinkerState);
+                if (!blinkerTimer) blinkerTimer = setInterval(() => {
+                    blinkerState = !blinkerState;
+                    blinkerL.classList.toggle('dim', blinkerLeft && blinkerState);
+                    blinkerR.classList.toggle('dim', blinkerRight && blinkerState);
+                }, 400);
+            } else {
+                blinkerL.classList.remove('dim');
+                blinkerR.classList.remove('dim');
+                if (blinkerTimer) { clearInterval(blinkerTimer); blinkerTimer = null; }
             }
         }
 
