@@ -299,6 +299,19 @@
             opacity: 0.7;
         }
 
+        .stats-overlay .autopilot {
+            font-size: 9px;
+            font-weight: 650;
+            color: #0070ff;
+            margin-bottom: 2px;
+            white-space: nowrap;
+            display: none;
+        }
+
+        .stats-overlay .autopilot.active {
+            display: block;
+        }
+
         .stats-overlay .blinker {
             display: none;
             transition: opacity 0.1s;
@@ -546,6 +559,7 @@
                             </svg>
                         </div>
                         <div class="speed">
+                            <span class="autopilot" id="autopilot"></span>
                             <span class="speed-val" id="speedVal">0</span>
                             <span class="speed-unit">km/h</span>
                         </div>
@@ -626,7 +640,7 @@
         const slider = $('slider'), playBtn = $('playBtn'), exportBtn = $('exportBtn');
         const frameNum = $('frameNum'), fileName = $('fileName'), metaList = $('metaList');
         const statsOverlay = $('statsOverlay'), gearText = $('gearText'), speedVal = $('speedVal');
-        const steeringSvg = $('steeringSvg'), accelFill = $('accelFill');
+        const steeringSvg = $('steeringSvg'), accelFill = $('accelFill'), autopilot = $('autopilot');
         const blinkerL = statsOverlay.querySelector('.blinker-l'), blinkerR = statsOverlay.querySelector('.blinker-r');
         const brakeEl = statsOverlay.querySelector('.brake');
         let blinkerTimer = null, blinkerState = false, blinkerLeft = false, blinkerRight = false;
@@ -853,6 +867,11 @@
 
             lastSpeedMps = sei.vehicleSpeedMps || 0;
             speedVal.textContent = Math.round(lastSpeedMps * (useMph ? 2.237 : 3.6));
+
+            const apMap = { 1: 'Full Self-Driving', 2: 'Autosteer', 3: 'TACC' };
+            const apText = apMap[sei.autopilotState];
+            autopilot.textContent = apText ? `${apText} Active` : '';
+            autopilot.classList.toggle('active', !!apText);
 
             steeringSvg.style.transform = `rotate(${sei.steeringWheelAngle || 0}deg)`;
 
