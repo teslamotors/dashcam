@@ -264,6 +264,7 @@
             border-radius: 12px;
             border: 3px solid rgba(255, 255, 255, 0.15);
             box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.05), 0 0 20px rgba(0, 0, 0, 0.3);
+            user-select: none;
         }
 
         .stats-overlay.visible {
@@ -284,8 +285,13 @@
             align-items: center;
             justify-content: center;
             min-width: 70px;
+        }
+
+        .stats-overlay .speed-click {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
             cursor: pointer;
-            user-select: none;
         }
 
         .stats-overlay .speed-val {
@@ -560,8 +566,10 @@
                         </div>
                         <div class="speed">
                             <span class="autopilot" id="autopilot"></span>
-                            <span class="speed-val" id="speedVal">0</span>
-                            <span class="speed-unit">km/h</span>
+                            <span class="speed-click">
+                                <span class="speed-val" id="speedVal">0</span>
+                                <span class="speed-unit">km/h</span>
+                            </span>
                         </div>
                         <div class="steering">
                             <svg viewBox="0 0 24 24" id="steeringSvg">
@@ -646,7 +654,7 @@
         let blinkerTimer = null, blinkerState = false, blinkerLeft = false, blinkerRight = false;
         let useMph = false, lastSpeedMps = 0;
         const speedUnit = statsOverlay.querySelector('.speed-unit');
-        statsOverlay.querySelector('.speed').onclick = () => {
+        statsOverlay.querySelector('.speed-click').onclick = () => {
             useMph = !useMph;
             speedUnit.textContent = useMph ? 'mph' : 'km/h';
             speedVal.textContent = Math.round(lastSpeedMps * (useMph ? 2.237 : 3.6));
