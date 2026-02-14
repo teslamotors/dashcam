@@ -300,16 +300,29 @@
         }
 
         .stats-overlay .blinker {
-            opacity: 0;
+            display: none;
             transition: opacity 0.1s;
         }
 
-        .stats-overlay .blinker.on {
-            opacity: 1;
+        .stats-overlay .blinker.active {
+            display: flex;
+        }
+
+        .stats-overlay .blinker.dim {
+            opacity: 0.35;
+        }
+
+        .stats-overlay .blinker circle {
+            fill: rgb(80, 186, 69);
+            stroke: none;
+        }
+
+        .stats-overlay .accel-fill {
+            fill: rgba(84, 209, 71, 0.7);
         }
 
         .stats-overlay .brake.applied svg {
-            fill: #ff6b6b;
+            fill: rgb(255, 107, 107);
         }
 
         .stats-overlay .gear {
@@ -335,7 +348,6 @@
         .stats-overlay .blinker-l {
             grid-column: 2;
             grid-row: 1 / 3;
-            display: flex;
             align-items: center;
             justify-content: center;
         }
@@ -343,7 +355,6 @@
         .stats-overlay .blinker-r {
             grid-column: 4;
             grid-row: 1 / 3;
-            display: flex;
             align-items: center;
             justify-content: center;
         }
@@ -490,7 +501,12 @@
                     <div class="stats-overlay" id="statsOverlay">
                         <div class="blinker blinker-l">
                             <svg viewBox="0 0 24 24">
-                                <polygon points="14,6 6,12 14,18" />
+                                <circle cx="12" cy="12" r="9" stroke-width="1" />
+                                <g transform="translate(4.5, 4.5) scale(0.625)">
+                                    <path
+                                        d="M13 9a1 1 0 0 1-1-1V5.061a1 1 0 0 0-1.811-.75l-6.835 6.836a1.207 1.207 0 0 0 0 1.707l6.835 6.835a1 1 0 0 0 1.811-.75V16a1 1 0 0 1 1-1h6a1 1 0 0 0 1-1v-4a1 1 0 0 0-1-1z"
+                                        fill="#fff" />
+                                </g>
                             </svg>
                         </div>
                         <div class="gear">
@@ -513,7 +529,12 @@
                         </div>
                         <div class="blinker blinker-r">
                             <svg viewBox="0 0 24 24">
-                                <polygon points="10,6 18,12 10,18" />
+                                <circle cx="12" cy="12" r="9" stroke-width="1" />
+                                <g transform="translate(19.5, 4.5) scale(-0.625, 0.625)">
+                                    <path
+                                        d="M13 9a1 1 0 0 1-1-1V5.061a1 1 0 0 0-1.811-.75l-6.835 6.836a1.207 1.207 0 0 0 0 1.707l6.835 6.835a1 1 0 0 0 1.811-.75V16a1 1 0 0 1 1-1h6a1 1 0 0 0 1-1v-4a1 1 0 0 0-1-1z"
+                                        fill="#fff" />
+                                </g>
                             </svg>
                         </div>
                         <div class="brake">
@@ -530,7 +551,7 @@
                                     </clipPath>
                                 </defs>
                                 <circle cx="12" cy="12" r="9" fill="none" stroke="#fff" stroke-width="1" />
-                                <circle cx="12" cy="12" r="9" fill="#4ade80" clip-path="url(#accelClip)" />
+                                <circle cx="12" cy="12" r="9" class="accel-fill" clip-path="url(#accelClip)" />
                             </svg>
                         </div>
                     </div>
@@ -815,17 +836,19 @@
 
             blinkerLeft = !!sei.blinkerOnLeft;
             blinkerRight = !!sei.blinkerOnRight;
+            blinkerL.classList.toggle('active', blinkerLeft);
+            blinkerR.classList.toggle('active', blinkerRight);
             if (blinkerLeft || blinkerRight) {
-                blinkerL.classList.toggle('on', blinkerLeft && blinkerState);
-                blinkerR.classList.toggle('on', blinkerRight && blinkerState);
+                blinkerL.classList.toggle('dim', blinkerLeft && blinkerState);
+                blinkerR.classList.toggle('dim', blinkerRight && blinkerState);
                 if (!blinkerTimer) blinkerTimer = setInterval(() => {
                     blinkerState = !blinkerState;
-                    blinkerL.classList.toggle('on', blinkerLeft && blinkerState);
-                    blinkerR.classList.toggle('on', blinkerRight && blinkerState);
+                    blinkerL.classList.toggle('dim', blinkerLeft && blinkerState);
+                    blinkerR.classList.toggle('dim', blinkerRight && blinkerState);
                 }, 400);
             } else {
-                blinkerL.classList.remove('on');
-                blinkerR.classList.remove('on');
+                blinkerL.classList.remove('dim');
+                blinkerR.classList.remove('dim');
                 if (blinkerTimer) { clearInterval(blinkerTimer); blinkerTimer = null; }
             }
         }
