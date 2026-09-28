@@ -32,10 +32,11 @@ def main(path: str):
     """Main function to extract and print SEI metadata from the video file, in CSV format."""
     has_sei = False
     with open(path, "rb") as fp:
+        codec, nal_length_size = find_video_config(fp)
         offset, size = find_mdat(fp)
         headers = [
             field.name for field in dashcam_pb2.SeiMetadata.DESCRIPTOR.fields]
-        for meta in iter_sei_messages(fp, offset, size):
+        for meta in iter_sei_messages(fp, offset, size, codec, nal_length_size):
             if not has_sei:
                 has_sei = True
                 print(','.join(headers))
@@ -50,10 +51,11 @@ def main(path: str):
         print("  * If car is parked, SEI data may not be present")
 
 
-def iter_sei_messages(fp, offset: int, size: int):
+def iter_sei_messages(fp, offset: int, size: int, codec: str = "h264",
+                      nal_length_size: int = 4):
     """Yield parsed SeiMetadata messages from the MP4 file."""
-    for nal in iter_nals(fp, offset, size):
-        payload = extract_proto_payload(nal)
+    for nal in iter_nals(fp, offset, size, codec, nal_length_size):
+        payload = extract_proto_payload(nal, codec)
         if not payload:
             continue
         meta = dashcam_pb2.SeiMetadata()
@@ -64,20 +66,21 @@ def iter_sei_messages(fp, offset: int, size: int):
         yield meta
 
 
-def extract_proto_payload(nal: bytes) -> Optional[bytes]:
-    """Extract protobuf payload from SEI NAL unit."""
-    if not isinstance(nal, bytes) or len(nal) < 2:
+def extract_proto_payload(nal: bytes, codec: str = "h264") -> Optional[bytes]:
+    """Extract Tesla's protobuf payload from an H.264 or H.265 SEI NAL unit."""
+    header_size = 2 if codec == "h265" else 1
+    if not isinstance(nal, bytes) or len(nal) < header_size + 4:
         return None
-    for i in range(3, len(nal) - 1):
-        byte = nal[i]
-        if byte == 0x42:
-            continue
-        if byte == 0x69:
-            if i > 2:
-                return strip_emulation_prevention_bytes(nal[i + 1:-1])
-            break
-        break
-    return None
+    if nal[header_size] != 5:  # user_data_unregistered
+        return None
+
+    marker_start = header_size + 2  # NAL header + payload type + payload size
+    i = marker_start
+    while i < len(nal) - 1 and nal[i] == 0x42:
+        i += 1
+    if i <= marker_start or i >= len(nal) - 1 or nal[i] != 0x69:
+        return None
+    return strip_emulation_prevention_bytes(nal[i + 1:-1])
 
 
 def strip_emulation_prevention_bytes(data: bytes) -> bytes:
@@ -93,38 +96,107 @@ def strip_emulation_prevention_bytes(data: bytes) -> bytes:
     return bytes(stripped)
 
 
-def iter_nals(fp, offset: int, size: int) -> Generator[bytes, None, None]:
+def iter_nals(fp, offset: int, size: int, codec: str = "h264",
+              nal_length_size: int = 4) -> Generator[bytes, None, None]:
     """Yield SEI user NAL units from the MP4 mdat atom."""
-    NAL_ID_SEI = 6
-    NAL_SEI_ID_USER_DATA_UNREGISTERED = 5
+    if nal_length_size not in (1, 2, 3, 4):
+        raise ValueError("NAL length size must be between 1 and 4 bytes")
 
     fp.seek(offset)
     consumed = 0
     while size == 0 or consumed < size:
-        header = fp.read(4)
-        if len(header) < 4:
+        header = fp.read(nal_length_size)
+        if len(header) < nal_length_size:
             break
-        nal_size = struct.unpack(">I", header)[0]
-        if nal_size < 2:
-            fp.seek(nal_size, 1)
-            consumed += 4 + nal_size
+        nal_size = int.from_bytes(header, "big")
+        consumed += nal_length_size
+        if nal_size < 1:
             continue
 
-        first_two = fp.read(2)
-        if len(first_two) != 2:
+        nal = fp.read(nal_size)
+        if len(nal) != nal_size:
             break
+        consumed += nal_size
 
-        if (first_two[0] & 0x1F) != NAL_ID_SEI or first_two[1] != NAL_SEI_ID_USER_DATA_UNREGISTERED:
-            fp.seek(nal_size - 2, 1)
-            consumed += 4 + nal_size
-            continue  # skip non-SEI NALs
+        if codec == "h265":
+            if len(nal) < 3:
+                continue
+            nal_type = (nal[0] >> 1) & 0x3F
+            payload_type = nal[2]
+            if nal_type not in (39, 40) or payload_type != 5:
+                continue
+        else:
+            if len(nal) < 2:
+                continue
+            nal_type = nal[0] & 0x1F
+            payload_type = nal[1]
+            if nal_type != 6 or payload_type != 5:
+                continue
 
-        rest = fp.read(nal_size - 2)
-        if len(rest) != nal_size - 2:
+        yield nal
+
+
+def _find_box(fp, start: int, end: int, name: bytes) -> Tuple[int, int]:
+    """Return (payload_start, box_end) for a direct child MP4 box."""
+    pos = start
+    while pos + 8 <= end:
+        fp.seek(pos)
+        header = fp.read(8)
+        if len(header) != 8:
             break
-        payload = first_two + rest
-        consumed += 4 + nal_size
-        yield payload
+        size32, atom_type = struct.unpack(">I4s", header)
+        header_size = 8
+        if size32 == 1:
+            large = fp.read(8)
+            if len(large) != 8:
+                break
+            atom_size = struct.unpack(">Q", large)[0]
+            header_size = 16
+        elif size32 == 0:
+            atom_size = end - pos
+        else:
+            atom_size = size32
+
+        if atom_size < header_size or pos + atom_size > end:
+            break
+        box_end = pos + atom_size
+        if atom_type == name:
+            return pos + header_size, box_end
+        if size32 == 0:
+            break
+        pos = box_end
+    raise RuntimeError(f'MP4 box {name.decode("ascii", "replace")} not found')
+
+
+def find_video_config(fp) -> Tuple[str, int]:
+    """Return (codec, NAL length size) from avcC/hvcC in the first video sample entry."""
+    current = fp.tell()
+    try:
+        fp.seek(0, 2)
+        file_end = fp.tell()
+        moov_start, moov_end = _find_box(fp, 0, file_end, b"moov")
+        trak_start, trak_end = _find_box(fp, moov_start, moov_end, b"trak")
+        mdia_start, mdia_end = _find_box(fp, trak_start, trak_end, b"mdia")
+        minf_start, minf_end = _find_box(fp, mdia_start, mdia_end, b"minf")
+        stbl_start, stbl_end = _find_box(fp, minf_start, minf_end, b"stbl")
+        stsd_start, stsd_end = _find_box(fp, stbl_start, stbl_end, b"stsd")
+
+        entry_start = stsd_start + 8  # FullBox header + entry_count
+        try:
+            sample_start, sample_end = _find_box(fp, entry_start, stsd_end, b"avc1")
+            config_start, _ = _find_box(fp, sample_start + 78, sample_end, b"avcC")
+            fp.seek(config_start + 4)
+            return "h264", (fp.read(1)[0] & 0x03) + 1
+        except RuntimeError:
+            try:
+                sample_start, sample_end = _find_box(fp, entry_start, stsd_end, b"hvc1")
+            except RuntimeError:
+                sample_start, sample_end = _find_box(fp, entry_start, stsd_end, b"hev1")
+            config_start, _ = _find_box(fp, sample_start + 78, sample_end, b"hvcC")
+            fp.seek(config_start + 21)
+            return "h265", (fp.read(1)[0] & 0x03) + 1
+    finally:
+        fp.seek(current)
 
 
 def find_mdat(fp) -> Tuple[int, int]:

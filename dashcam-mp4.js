@@ -56,19 +56,59 @@ class DashcamMP4 {
         const minf = this.findBox(mdia.start, mdia.end, 'minf');
         const stbl = this.findBox(minf.start, minf.end, 'stbl');
         const stsd = this.findBox(stbl.start, stbl.end, 'stsd');
-        const avc1 = this.findBox(stsd.start + 8, stsd.end, 'avc1');
-        const avcC = this.findBox(avc1.start + 78, avc1.end, 'avcC');
 
-        const o = avcC.start;
-        const codec = `avc1.${this.hex(this.view.getUint8(o + 1))}${this.hex(this.view.getUint8(o + 2))}${this.hex(this.view.getUint8(o + 3))}`;
+        let sampleEntry, sampleType, codecFamily;
+        try {
+            sampleEntry = this.findBox(stsd.start + 8, stsd.end, 'avc1');
+            sampleType = 'avc1';
+            codecFamily = 'avc';
+        } catch {
+            try {
+                sampleEntry = this.findBox(stsd.start + 8, stsd.end, 'hvc1');
+                sampleType = 'hvc1';
+            } catch {
+                sampleEntry = this.findBox(stsd.start + 8, stsd.end, 'hev1');
+                sampleType = 'hev1';
+            }
+            codecFamily = 'hevc';
+        }
 
-        // Extract SPS/PPS
-        let p = o + 6;
-        const spsLen = this.view.getUint16(p);
-        const sps = new Uint8Array(this.buffer.slice(p + 2, p + 2 + spsLen));
-        p += 2 + spsLen + 1;
-        const ppsLen = this.view.getUint16(p);
-        const pps = new Uint8Array(this.buffer.slice(p + 2, p + 2 + ppsLen));
+        let codec, vps = null, sps = null, pps = null, nalLengthSize = 4;
+        if (codecFamily === 'avc') {
+            const avcC = this.findBox(sampleEntry.start + 78, sampleEntry.end, 'avcC');
+            const o = avcC.start;
+            codec = `avc1.${this.hex(this.view.getUint8(o + 1))}${this.hex(this.view.getUint8(o + 2))}${this.hex(this.view.getUint8(o + 3))}`;
+            nalLengthSize = (this.view.getUint8(o + 4) & 0x03) + 1;
+
+            let p = o + 6;
+            const spsLen = this.view.getUint16(p);
+            sps = new Uint8Array(this.buffer.slice(p + 2, p + 2 + spsLen));
+            p += 2 + spsLen + 1;
+            const ppsLen = this.view.getUint16(p);
+            pps = new Uint8Array(this.buffer.slice(p + 2, p + 2 + ppsLen));
+        } else {
+            const hvcC = this.findBox(sampleEntry.start + 78, sampleEntry.end, 'hvcC');
+            const o = hvcC.start;
+            codec = this.hevcCodecString(sampleType, o);
+            nalLengthSize = (this.view.getUint8(o + 21) & 0x03) + 1;
+
+            let p = o + 23;
+            const arrayCount = this.view.getUint8(o + 22);
+            for (let i = 0; i < arrayCount; i++) {
+                const nalType = this.view.getUint8(p++) & 0x3F;
+                const nalCount = this.view.getUint16(p);
+                p += 2;
+                for (let j = 0; j < nalCount; j++) {
+                    const nalLen = this.view.getUint16(p);
+                    p += 2;
+                    const nal = new Uint8Array(this.buffer.slice(p, p + nalLen));
+                    p += nalLen;
+                    if (nalType === 32 && !vps) vps = nal;
+                    else if (nalType === 33 && !sps) sps = nal;
+                    else if (nalType === 34 && !pps) pps = nal;
+                }
+            }
+        }
 
         // Get timescale from mdhd (ticks per second, used to convert stts deltas to ms)
         const mdhd = this.findBox(mdia.start, mdia.end, 'mdhd');
@@ -91,11 +131,50 @@ class DashcamMP4 {
         }
 
         this._config = {
-            width: this.view.getUint16(avc1.start + 24),
-            height: this.view.getUint16(avc1.start + 26),
-            codec, sps, pps, timescale, durations
+            width: this.view.getUint16(sampleEntry.start + 24),
+            height: this.view.getUint16(sampleEntry.start + 26),
+            codec, codecFamily, nalLengthSize, vps, sps, pps, timescale, durations
         };
         return this._config;
+    }
+
+    /** Build an RFC 6381-style HEVC codec string from hvcC profile_tier_level fields. */
+    hevcCodecString(sampleType, offset) {
+        const profileByte = this.view.getUint8(offset + 1);
+        const profileSpace = ['', 'A', 'B', 'C'][(profileByte >> 6) & 0x03];
+        const tier = (profileByte & 0x20) ? 'H' : 'L';
+        const profileIdc = profileByte & 0x1F;
+        const compatibility = this.reverseBits32(this.view.getUint32(offset + 2)).toString(16);
+        const levelIdc = this.view.getUint8(offset + 12);
+        const constraints = [];
+        for (let i = 0; i < 6; i++) constraints.push(this.view.getUint8(offset + 6 + i));
+        while (constraints.length > 1 && constraints[constraints.length - 1] === 0) constraints.pop();
+        const constraintSuffix = '.' + constraints.map(b => this.hex(b).toUpperCase()).join('.');
+        return `${sampleType}.${profileSpace}${profileIdc}.${compatibility}.${tier}${levelIdc}${constraintSuffix}`;
+    }
+
+    reverseBits32(value) {
+        let out = 0;
+        for (let i = 0; i < 32; i++) {
+            out = ((out << 1) | (value & 1)) >>> 0;
+            value >>>= 1;
+        }
+        return out >>> 0;
+    }
+
+    readNalLength(offset, lengthSize) {
+        let value = 0;
+        for (let i = 0; i < lengthSize; i++) value = value * 256 + this.view.getUint8(offset + i);
+        return value;
+    }
+
+    nalType(firstByte, codecFamily) {
+        return codecFamily === 'hevc' ? (firstByte >> 1) & 0x3F : firstByte & 0x1F;
+    }
+
+    /** HEVC VCL NALs start each picture with first_slice_segment_in_pic_flag = 1. */
+    hevcFirstSliceSegment(nal) {
+        return nal.length >= 3 && (nal[2] & 0x80) !== 0;
     }
 
     // -------------------------------------------------------------
@@ -109,29 +188,61 @@ class DashcamMP4 {
         const frames = [];
         let cursor = mdat.offset;
         const end = mdat.offset + mdat.size;
-        let pendingSei = null, currentSps = config.sps, currentPps = config.pps;
+        let pendingSei = null;
+        let currentVps = config.vps, currentSps = config.sps, currentPps = config.pps;
 
-        while (cursor + 4 <= end) {
-            const len = this.view.getUint32(cursor);
-            cursor += 4;
+        while (cursor + config.nalLengthSize <= end) {
+            const len = this.readNalLength(cursor, config.nalLengthSize);
+            cursor += config.nalLengthSize;
             if (len < 1 || cursor + len > this.view.byteLength) break;
 
-            const type = this.view.getUint8(cursor) & 0x1F;
+            const type = this.nalType(this.view.getUint8(cursor), config.codecFamily);
             const data = new Uint8Array(this.buffer.slice(cursor, cursor + len));
 
-            if (type === 7) currentSps = data; // SPS
-            else if (type === 8) currentPps = data; // PPS
-            else if (type === 6) pendingSei = this.decodeSei(data, SeiMetadata); // SEI
-            else if (type === 5 || type === 1) { // IDR or Slice
-                frames.push({
-                    index: frames.length,
-                    keyframe: type === 5,
-                    data,
-                    sei: pendingSei,
-                    sps: currentSps,
-                    pps: currentPps
-                });
-                pendingSei = null;
+            if (config.codecFamily === 'avc') {
+                if (type === 7) currentSps = data; // SPS
+                else if (type === 8) currentPps = data; // PPS
+                else if (type === 6) pendingSei = this.decodeSei(data, SeiMetadata, 'avc');
+                else if (type === 5 || type === 1) {
+                    frames.push({
+                        index: frames.length,
+                        keyframe: type === 5,
+                        data,
+                        sei: pendingSei,
+                        vps: null,
+                        nalUnits: [data],
+                        sps: currentSps,
+                        pps: currentPps
+                    });
+                    pendingSei = null;
+                }
+            } else {
+                if (type === 32) currentVps = data; // VPS
+                else if (type === 33) currentSps = data; // SPS
+                else if (type === 34) currentPps = data; // PPS
+                else if (type === 39) pendingSei = this.decodeSei(data, SeiMetadata, 'hevc'); // Prefix SEI
+                else if (type === 40) { // Suffix SEI belongs to the preceding picture
+                    const sei = this.decodeSei(data, SeiMetadata, 'hevc');
+                    if (sei && frames.length) frames[frames.length - 1].sei = sei;
+                } else if (type <= 31) {
+                    const firstSlice = this.hevcFirstSliceSegment(data);
+                    const previous = frames[frames.length - 1];
+                    if (!firstSlice && previous) {
+                        previous.nalUnits.push(data);
+                    } else {
+                        frames.push({
+                            index: frames.length,
+                            keyframe: type >= 16 && type <= 21,
+                            data,
+                            nalUnits: [data],
+                            sei: pendingSei,
+                            vps: currentVps,
+                            sps: currentSps,
+                            pps: currentPps
+                        });
+                        pendingSei = null;
+                    }
+                }
             }
             cursor += len;
         }
@@ -144,23 +255,30 @@ class DashcamMP4 {
 
     /** Extract all SEI messages for CSV export */
     extractSeiMessages(SeiMetadata) {
+        const config = this.getConfig();
         const mdat = this.findMdat();
         const messages = [];
         let cursor = mdat.offset;
         const end = mdat.offset + mdat.size;
 
-        while (cursor + 4 <= end) {
-            const nalSize = this.view.getUint32(cursor);
-            cursor += 4;
+        while (cursor + config.nalLengthSize <= end) {
+            const nalSize = this.readNalLength(cursor, config.nalLengthSize);
+            cursor += config.nalLengthSize;
 
             if (nalSize < 2 || cursor + nalSize > this.view.byteLength) {
                 cursor += Math.max(nalSize, 0);
                 continue;
             }
 
-            // NAL type 6 = SEI, payload type 5 = user data unregistered
-            if ((this.view.getUint8(cursor) & 0x1F) === 6 && this.view.getUint8(cursor + 1) === 5) {
-                const sei = this.decodeSei(new Uint8Array(this.buffer.slice(cursor, cursor + nalSize)), SeiMetadata);
+            const type = this.nalType(this.view.getUint8(cursor), config.codecFamily);
+            const payloadTypeOffset = cursor + (config.codecFamily === 'hevc' ? 2 : 1);
+            const isSei = config.codecFamily === 'hevc' ? type === 39 || type === 40 : type === 6;
+            if (isSei && payloadTypeOffset < cursor + nalSize && this.view.getUint8(payloadTypeOffset) === 5) {
+                const sei = this.decodeSei(
+                    new Uint8Array(this.buffer.slice(cursor, cursor + nalSize)),
+                    SeiMetadata,
+                    config.codecFamily
+                );
                 if (sei) messages.push(sei);
             }
             cursor += nalSize;
@@ -169,12 +287,15 @@ class DashcamMP4 {
     }
 
     /** Decode SEI NAL unit to protobuf message */
-    decodeSei(nal, SeiMetadata) {
-        if (!SeiMetadata || nal.length < 4) return null;
+    decodeSei(nal, SeiMetadata, codecFamily = 'avc') {
+        const headerSize = codecFamily === 'hevc' ? 2 : 1;
+        if (!SeiMetadata || nal.length < headerSize + 4) return null;
+        if (nal[headerSize] !== 5) return null; // user_data_unregistered
 
-        let i = 3;
+        const markerStart = headerSize + 2; // NAL header + payload type + payload size
+        let i = markerStart;
         while (i < nal.length && nal[i] === 0x42) i++;
-        if (i <= 3 || i + 1 >= nal.length || nal[i] !== 0x69) return null;
+        if (i <= markerStart || i + 1 >= nal.length || nal[i] !== 0x69) return null;
 
         try {
             return SeiMetadata.decode(this.stripEmulationBytes(nal.subarray(i + 1, nal.length - 1)));
